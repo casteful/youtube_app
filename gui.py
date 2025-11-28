@@ -126,7 +126,7 @@ fps_var = ctk.IntVar(value=24)
 ctk.CTkEntry(video_frame, textvariable=fps_var, width=70).grid(row=0, column=5)
 
 # ================= LOG =================
-log_box = ctk.CTkTextbox(app, width=860, height=120)
+log_box = ctk.CTkTextbox(app, width=860, height=80)
 log_box.pack(pady=10)
 
 def log(msg):
