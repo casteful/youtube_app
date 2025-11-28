@@ -9,26 +9,29 @@ import re
 from moviepy.editor import *
 from pydub import AudioSegment, effects
 import io
+import librosa
+import numpy as np
 
 torch.serialization.add_safe_globals([RAdam, defaultdict])
 
 STORY_FILE = "story.txt"
+
 TTS_MODEL = "tts_models/en/vctk/vits"
-TTS_NARRATOR_SPEAKER = "p226"    
+TTS_NARRATOR_SPEAKER = "p229" #p226
 TTS_DIALOGUE_SPEAKER = "p229"     
 TTS_PRESET = "high_quality"  
 TTS_FADE_MS = 400       
 TTS_PARAGRAPH_PAUSE_MS = 700       
 TTS_BREATH_PAUSE_MS = 250
-TTS_SPEED_CALM = 1
-TTS_SPEED_TENSE = 1.18
-TTS_SPEED_SAD = 1.12
+TTS_SPEED_CALM = 1   
+TTS_SPEED_TENSE = 0.98
+TTS_SPEED_SAD = 0.99
 TTS_AMBIENCE_VOLUME = 20
 TTS_AMBIENCE_FILE = "ambience.wav"
 
-AUDIO_MP3 = r"C:\Users\Fred\Desktop\ai_clips\story.mp3" 
-AUDIO_WAV = r"C:\Users\Fred\Desktop\ai_clips\story.wav" 
-IMAGES_PATH = r"C:\Users\Fred\Desktop\ai_clips\images"     
+AUDIO_MP3 = r"C:\Users\Fred\Desktop\youtube_app\story.mp3" 
+AUDIO_WAV = r"C:\Users\Fred\Desktop\youtube_app\story.wav" 
+IMAGES_PATH = r"C:\Users\Fred\Desktop\youtube_app\images"     
 N_SENTENCES = 3                     
 LANGUAGE = "en"
 OUTPUT_VIDEO = "final_video.mp4"
@@ -62,12 +65,14 @@ def is_dialogue(text):
 def tts_to_segment(text, speaker, speed):
     wav = tts.tts(
         text=text,
-        speaker=speaker,
-        length_scale=speed
+        speaker=speaker
     )
 
+    wav = np.array(wav, dtype=np.float32)
+    wav_stretched = librosa.effects.time_stretch(wav, rate=speed)
+
     buf = io.BytesIO()
-    sf.write(buf, wav, 24000, format="WAV")
+    sf.write(buf, wav_stretched, 24000, format="WAV")
     buf.seek(0)
     return AudioSegment.from_file(buf, format="wav")
 
