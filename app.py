@@ -17,7 +17,7 @@ torch.serialization.add_safe_globals([RAdam, defaultdict])
 STORY_FILE = "story.txt"
 
 TTS_MODEL = "tts_models/en/vctk/vits"
-TTS_NARRATOR_SPEAKER = "p229" #p226
+TTS_NARRATOR_SPEAKER = "p229" #p226 p262
 TTS_DIALOGUE_SPEAKER = "p229"     
 TTS_PRESET = "high_quality"  
 TTS_FADE_MS = 400       
