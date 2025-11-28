@@ -23,21 +23,26 @@ TTS_PRESET = "high_quality"
 TTS_FADE_MS = 400       
 TTS_PARAGRAPH_PAUSE_MS = 700       
 TTS_BREATH_PAUSE_MS = 250
+TTS_AMBIENCE_VOLUME = 20
+TTS_AMBIENCE_FILE = "ambience.wav"
 TTS_SPEED_CALM = 1   
 TTS_SPEED_TENSE = 0.98
 TTS_SPEED_SAD = 0.99
-TTS_AMBIENCE_VOLUME = 20
-TTS_AMBIENCE_FILE = "ambience.wav"
+TTS_TENSE_EMOTION_REGEX = r"(scream|blood|dark|shadow|knife|dead|cold|steps|run|ran|chase|fear|fight|escape|shout|yell|terror|panic|fright|alarmed|nervous|anxious|worried|uneasy|agitated|distressed)"
+TTS_SAD_EMOTION_REGEX = r"(tears|cry|empty|alone|silent|lost|lonely|grief|sorrow|heartbreak|regret|mourning|depressed|melancholy|gloomy|despair|hopeless|downcast)"
 
 AUDIO_MP3 = r"C:\Users\Fred\Desktop\youtube_app\story.mp3" 
 AUDIO_WAV = r"C:\Users\Fred\Desktop\youtube_app\story.wav" 
-IMAGES_PATH = r"C:\Users\Fred\Desktop\youtube_app\images"     
+IMAGES_PATH = r"C:\Users\Fred\Desktop\youtube_app\images"    
+
 N_SENTENCES = 3                     
 LANGUAGE = "en"
-OUTPUT_VIDEO = "final_video.mp4"
 TIMED_SENTENCES_FILE = "timed_sentences.txt"
+
 FADE_DURATION = 1                        
 ZOOM = 1.05
+VIDEO_FPS = 24
+OUTPUT_VIDEO = "final_video.mp4"
 
 USE_GPU = torch.cuda.is_available()
 print(USE_GPU)
@@ -45,10 +50,9 @@ tts = TTS(model_name=TTS_MODEL, gpu=USE_GPU, progress_bar=False)
 
 def detect_emotion(text):
     text = text.lower()
-
-    if re.search(r"(scream|blood|dark|shadow|fear|knife|dead|cold|steps)", text):
+    if re.search(TTS_TENSE_EMOTION_REGEX, text):
         return "tense"
-    if re.search(r"(alone|silent|lost|tears|cry|empty)", text):
+    if re.search(TTS_SAD_EMOTION_REGEX, text):
         return "sad"
     return "calm"
 
@@ -98,7 +102,8 @@ def synthesize_speech(text, output_file):
             speed = speed_by_emotion(emotion)
             
             voice = TTS_DIALOGUE_SPEAKER if is_dialogue(sentence) else TTS_NARRATOR_SPEAKER
-
+            print(f"  Sentence: \"{sentence}\" | Emotion: {emotion} | Speed: {speed:.2f} | Voice: {voice}")
+            
             seg = tts_to_segment(sentence, voice, speed)
             paragraph_audio += seg
             paragraph_audio += AudioSegment.silent(TTS_BREATH_PAUSE_MS)
@@ -197,7 +202,7 @@ def get_clips(blocks):
 
     video.write_videofile(
         OUTPUT_VIDEO,
-        fps=24,
+        fps=VIDEO_FPS,
         codec="libx264",
         audio_codec="aac",
         preset="ultrafast",
