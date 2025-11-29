@@ -35,7 +35,7 @@ AUDIO_MP3 = r"C:\Users\Fred\Desktop\youtube_app\story.mp3"
 AUDIO_WAV = r"C:\Users\Fred\Desktop\youtube_app\story.wav" 
 IMAGES_PATH = r"C:\Users\Fred\Desktop\youtube_app\images"    
 
-N_SENTENCES = 3                     
+N_SENTENCES = 2                     
 LANGUAGE = "en"
 TIMED_SENTENCES_FILE = "timed_sentences.txt"
 
@@ -180,8 +180,18 @@ def read_blocks():
             blocks.append({"start": start, "end": end})
     return blocks
 
+def get_sorted_files(folder, ext):
+    files = [f for f in os.listdir(folder) if f.lower().endswith(ext)]
+    #files.sort(key=lambda x: int(os.path.splitext(x)[0]))
+    files.sort(key=lambda x: os.path.getmtime(os.path.join(folder, x)))
+    return [os.path.join(folder, f) for f in files]
+
 def get_clips(blocks):
     clips = []
+
+    image_files = get_sorted_files(IMAGES_PATH, ".png")
+    if len(image_files) < len(blocks):
+        raise ValueError("Not enough images for the number of blocks.")
 
     for idx, block in enumerate(blocks):
         img_path = f"{IMAGES_PATH}\\{idx+1}.png"  
@@ -212,16 +222,21 @@ def get_clips(blocks):
     audio.close()
     
 def main():
-    synthesize_speech(STORY_FILE, AUDIO_WAV)
+    #synthesize_speech(STORY_FILE, AUDIO_WAV)
     print("✅ Synthesized speech from text.")
+
     #convert_to_wav(AUDIO_MP3, AUDIO_WAV)
     print("✅ Converted MP3 to WAV.")
+
     #sentences = get_sentences()
     print("✅ Extracted sentences from audio.")
+
     #get_blocks(sentences)
     print("✅ Created timed sentences file.")
-    #blocks = read_blocks()
+
+    blocks = read_blocks()
     print("✅ Read timed sentences.")
+
     #get_clips(blocks)
     print("✅ Created video clip from images.")
 
