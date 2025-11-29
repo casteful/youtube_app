@@ -11,13 +11,14 @@ from pydub import AudioSegment, effects
 import io
 import librosa
 import numpy as np
+import subprocess
 
 torch.serialization.add_safe_globals([RAdam, defaultdict])
 
 STORY_FILE = "story.txt"
 
 TTS_MODEL = "tts_models/en/vctk/vits"
-TTS_NARRATOR_SPEAKER = "p229" #p226 p262
+TTS_NARRATOR_SPEAKER = "p262" #p226 p262
 TTS_DIALOGUE_SPEAKER = "p229"     
 TTS_PRESET = "high_quality"  
 TTS_FADE_MS = 400       
@@ -26,22 +27,26 @@ TTS_BREATH_PAUSE_MS = 250
 TTS_AMBIENCE_VOLUME = 20
 TTS_AMBIENCE_FILE = "ambience.wav"
 TTS_SPEED_CALM = 1   
-TTS_SPEED_TENSE = 0.98
+TTS_SPEED_TENSE = 0.99
 TTS_SPEED_SAD = 0.99
 TTS_TENSE_EMOTION_REGEX = r"(scream|blood|dark|shadow|knife|dead|cold|steps|run|ran|chase|fear|fight|escape|shout|yell|terror|panic|fright|alarmed|nervous|anxious|worried|uneasy|agitated|distressed)"
 TTS_SAD_EMOTION_REGEX = r"(tears|cry|empty|alone|silent|lost|lonely|grief|sorrow|heartbreak|regret|mourning|depressed|melancholy|gloomy|despair|hopeless|downcast)"
 
-AUDIO_MP3 = r"C:\Users\Fred\Desktop\youtube_app\story.mp3" 
-AUDIO_WAV = r"C:\Users\Fred\Desktop\youtube_app\story.wav" 
-IMAGES_PATH = r"C:\Users\Fred\Desktop\youtube_app\images"    
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+AUDIO_MP3 = os.path.join(BASE_DIR, "story.mp3") 
+AUDIO_WAV = os.path.join(BASE_DIR, "story.wav") 
+IMAGES_PATH = os.path.join(BASE_DIR, "images")    
 
 N_SENTENCES = 2                     
 LANGUAGE = "en"
 TIMED_SENTENCES_FILE = "timed_sentences.txt"
 
+IMG_EXT = ".png"
 FADE_DURATION = 1                        
-ZOOM = 1.05
-VIDEO_FPS = 24
+ZOOM = 1.2
+VIDEO_FPS = 120
+RENDERING_PRESET = "slow" #ultrafast
+VIDEO_RESOLUTION = "800x480"
 OUTPUT_VIDEO = "final_video.mp4"
 
 USE_GPU = torch.cuda.is_available()
@@ -182,27 +187,51 @@ def read_blocks():
 
 def get_sorted_files(folder, ext):
     files = [f for f in os.listdir(folder) if f.lower().endswith(ext)]
-    #files.sort(key=lambda x: int(os.path.splitext(x)[0]))
     files.sort(key=lambda x: os.path.getmtime(os.path.join(folder, x)))
     return [os.path.join(folder, f) for f in files]
+
+def smooth_zoom(clip, zoom_start=1.0, zoom_end=1.12, easing='ease_in_out'):
+    duration = clip.duration
+
+    def easing_func(t):
+        p = t / duration
+        if p < 0.5:
+            return zoom_start + (zoom_end - zoom_start) * 2 * p * p
+        else:
+            return zoom_start + (zoom_end - zoom_start) * (1 - 2*(1-p)*(1-p))
+    
+    return clip.resize(lambda t: easing_func(t))
 
 def get_clips(blocks):
     clips = []
 
-    image_files = get_sorted_files(IMAGES_PATH, ".png")
+    image_files = get_sorted_files(IMAGES_PATH, IMG_EXT)
     if len(image_files) < len(blocks):
         raise ValueError("Not enough images for the number of blocks.")
 
+    #os.makedirs("temp_clips", exist_ok=True)
+
     for idx, block in enumerate(blocks):
-        img_path = f"{IMAGES_PATH}\\{idx+1}.png"  
+        img_path = image_files[idx]  
 
         duration = block["end"] - block["start"]
         start = block["start"]
 
+        #temp_video = f"temp_clips/clip_{idx}.mp4"
+
+        #subprocess.run(
+        #    f'ffmpeg -y -loop 1 -i "{img_path}" -t {duration} -vf "fps={VIDEO_FPS},scale={VIDEO_RESOLUTION}" -pix_fmt yuv420p "{temp_video}"',
+        #    shell=True,
+        #    check=True
+        #)
+
+        #clip = VideoFileClip(temp_video)
+        #clip = smooth_zoom(clip, zoom_start=1.0, zoom_end=ZOOM)
         clip = ImageClip(img_path).set_duration(duration)
         clip = clip.fadein(FADE_DURATION).fadeout(FADE_DURATION)
-        zoom_factor = ZOOM
-        clip = clip.resize(lambda t: 1 + (zoom_factor-1)*(t/duration))
+        clip = clip.set_fps(VIDEO_FPS)
+        clip = clip.resize(lambda t: 1 + (ZOOM-1)*(t/duration))
+        clip = clip.set_position(("center","center"))
         clip = clip.set_start(start)
         clips.append(clip)
 
@@ -215,11 +244,14 @@ def get_clips(blocks):
         fps=VIDEO_FPS,
         codec="libx264",
         audio_codec="aac",
-        preset="ultrafast",
-        threads=8
+        bitrate="20M",
+        preset=RENDERING_PRESET,
+        threads=8,
+        ffmpeg_params=["-pix_fmt", "yuv420p", "-vsync", "0", "-movflags", "+faststart"]
     )
 
     audio.close()
+    video.close()
     
 def main():
     #synthesize_speech(STORY_FILE, AUDIO_WAV)
@@ -237,7 +269,7 @@ def main():
     blocks = read_blocks()
     print("✅ Read timed sentences.")
 
-    #get_clips(blocks)
+    get_clips(blocks)
     print("✅ Created video clip from images.")
 
 if __name__ == "__main__":
