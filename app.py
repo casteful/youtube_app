@@ -39,7 +39,7 @@ IMAGES_PATH = os.path.join(BASE_DIR, "images")
 AI_VIDEOS_PATH = "ai_videos"      
 TEMP_AI_VIDEOS_PATH = "temp_clips"
 
-N_SENTENCES = 3                     
+N_SENTENCES = 2                     
 LANGUAGE = "en"
 TIMED_SENTENCES_FILE = "timed_sentences.txt"
 
@@ -50,7 +50,10 @@ FADE_DURATION = 1
 ZOOM = 1.2
 VIDEO_FPS = 60
 RENDERING_PRESET = "slow" #ultrafast
-VIDEO_RESOLUTION = "1280:720"
+VIDEO_RESOLUTION_HEIGHT = "1280"
+VIDEO_RESOLUTION_WIDTH = "720"
+VIDEO_ZOOM_FACTOR = 2
+VIDEO_BLUR_FACTOR = 1.1
 VIDEO_CODEC = "lanczos"
 VIDEO_BITRATE = "20M"
 OUTPUT_VIDEO = "final_video.mp4"
@@ -117,7 +120,8 @@ def retime_and_upscale_video_ffmpeg(
     input_video,
     output_video,
     target_duration,
-    resolution=VIDEO_RESOLUTION, 
+    resolution_height=VIDEO_RESOLUTION_HEIGHT,
+    resolution_width=VIDEO_RESOLUTION_WIDTH, 
     method=VIDEO_CODEC,
     fps=VIDEO_FPS,
     bitrate=VIDEO_BITRATE
@@ -135,8 +139,15 @@ def retime_and_upscale_video_ffmpeg(
 
     vf = (
         f"hwupload_cuda,"
-        f"scale_cuda={resolution}:interp_algo={method},"
+        f"scale_cuda={resolution_height}:{resolution_width}:interp_algo={method},"
         f"hwdownload,format=nv12,"
+        #?f"noise=c0s={0.05}:c0f=t," #noise
+        #?f"noise=c0s={0.05}:allf=t," #grain
+        #f"minterpolate='fps={fps}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1',"
+        f"zoompan=z='1+({VIDEO_ZOOM_FACTOR}-1)*(1-cos(on*PI/{fps*target_duration}))/2':d=1:s={resolution_height}x{resolution_width},"
+        f"gblur=sigma={VIDEO_BLUR_FACTOR},"
+        f"unsharp,"
+        f"vignette,"
         f"setpts={1/speed}*PTS"
     )
 
@@ -309,66 +320,6 @@ def run_ffmpeg_filter(input_file, output_file, vf_filter):
 
     subprocess.run(cmd, check=True)
 
-def zoom(input_file, output_file, zoom_factor=1.2):
-    vf = f"zoompan=z='min({zoom_factor},1+{zoom_factor}-1)*on*PTS)':d=1"
-    run_ffmpeg_filter(input_file, output_file, vf)
-
-def blur(input_file, output_file, sigma=2):
-    vf = f"gblur=sigma={sigma}"
-    run_ffmpeg_filter(input_file, output_file, vf)
-
-def sharpen(input_file, output_file):
-    vf = "unsharp"
-    run_ffmpeg_filter(input_file, output_file, vf)
-
-def noise(input_file, output_file, amount=0.05):
-    vf = f"noise=c0s={amount}:c0f=t"
-    run_ffmpeg_filter(input_file, output_file, vf)
-
-def grain(input_file, output_file, amount=0.05):
-    vf = f"noise=c0s={amount}:allf=t"
-    run_ffmpeg_filter(input_file, output_file, vf)
-
-def median_filter(input_file, output_file):
-    vf = "median"
-    run_ffmpeg_filter(input_file, output_file, vf)
-
-def edge_detect(input_file, output_file):
-    vf = "edgedetect=low=0.1:high=0.4"
-    run_ffmpeg_filter(input_file, output_file, vf)
-
-def cartoon(input_file, output_file):
-    vf = "frei0r=filter_name=cartoon0:0.5"
-    run_ffmpeg_filter(input_file, output_file, vf)
-
-def pencil_sketch(input_file, output_file):
-    vf = "frei0r=filter_name=pencil0:0.5"
-    run_ffmpeg_filter(input_file, output_file, vf)
-
-def glow(input_file, output_file, sigma=2):
-    vf = f"gblur=sigma={sigma},overlay"
-    run_ffmpeg_filter(input_file, output_file, vf)
-
-def vignette(input_file, output_file):
-    vf = "vignette"
-    run_ffmpeg_filter(input_file, output_file, vf)
-
-def vintage(input_file, output_file):
-    vf = "colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131"
-    run_ffmpeg_filter(input_file, output_file, vf)
-
-def posterize(input_file, output_file):
-    vf = "curves=preset=posterize"
-    run_ffmpeg_filter(input_file, output_file, vf)
-
-def pixelate(input_file, output_file, pixel_size=10):
-    vf = f"scale=iw/{pixel_size}:ih/{pixel_size},scale=iw:ih:flags=neighbor"
-    run_ffmpeg_filter(input_file, output_file, vf)
-
-def frame_interpolation(input_file, output_file, fps=60):
-    vf = f"minterpolate='fps={fps}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1'"
-    run_ffmpeg_filter(input_file, output_file, vf)
-
 def get_clips(blocks):
     clips = []
 
@@ -450,12 +401,16 @@ def get_clips_from_videos(blocks):
     video.write_videofile(
         OUTPUT_VIDEO,
         fps=VIDEO_FPS,
-        codec="libx264",
+        codec="h264_nvenc",   # ✅ GPU encoder. CPU - "libx264"
         audio_codec="aac",
         bitrate=VIDEO_BITRATE,
-        preset=RENDERING_PRESET,
-        threads=8,
-        ffmpeg_params=["-pix_fmt", "yuv420p", "-vsync", "0", "-movflags", "+faststart"]
+        threads=0,            # let NVENC manage
+        ffmpeg_params=[
+            "-pix_fmt", "yuv420p",
+            "-rc", "vbr",
+            "-movflags", "+faststart",
+            "-vsync", "0"
+        ]
     )
 
     audio.close()
@@ -465,13 +420,13 @@ def main():
     #synthesize_speech(STORY_FILE, AUDIO_WAV)
     print("✅ Synthesized speech from text.")
 
-    #convert_to_wav(AUDIO_MP3, AUDIO_WAV)
+    convert_to_wav(AUDIO_MP3, AUDIO_WAV)
     print("✅ Converted MP3 to WAV.")
 
-    #sentences = get_sentences()
+    sentences = get_sentences()
     print("✅ Extracted sentences from audio.")
 
-    #get_blocks(sentences)
+    get_blocks(sentences)
     print("✅ Created timed sentences file.")
 
     blocks = read_blocks()
