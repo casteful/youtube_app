@@ -56,7 +56,6 @@ VIDEO_BITRATE = "20M"
 OUTPUT_VIDEO = "final_video.mp4"
 
 USE_GPU = torch.cuda.is_available()
-print(USE_GPU)
 tts = TTS(model_name=TTS_MODEL, gpu=USE_GPU, progress_bar=False)
 
 def detect_emotion(text):
@@ -102,7 +101,6 @@ def retime_video_ffmpeg(src, dst, target_duration):
     original_duration = float(result.stdout.strip())
 
     pts_factor = target_duration / original_duration
-    print(f"Original: {original_duration}s, Target: {target_duration}s, PTS factor: {pts_factor}")
 
     cmd = [
         "ffmpeg", "-y",
@@ -124,7 +122,6 @@ def retime_and_upscale_video_ffmpeg(
     fps=VIDEO_FPS,
     bitrate=VIDEO_BITRATE
 ):
-    # Get original duration
     probe_cmd = [
         "ffprobe", "-v", "error",
         "-select_streams", "v:0",
@@ -135,8 +132,6 @@ def retime_and_upscale_video_ffmpeg(
 
     original_duration = float(subprocess.check_output(probe_cmd).decode().strip())
     speed = original_duration / target_duration
-
-    print(f"Original: {original_duration:.2f}s | Target: {target_duration:.2f}s | Speed factor: {speed:.4f}")
 
     vf = (
         f"hwupload_cuda,"
@@ -154,7 +149,7 @@ def retime_and_upscale_video_ffmpeg(
         "-r", str(fps),
 
         "-c:v", "h264_nvenc",
-        "-preset", "p7",           # max NVENC quality
+        "-preset", "p7",           
         "-rc", "vbr",
         "-b:v", bitrate,
         "-maxrate", bitrate,
@@ -178,8 +173,6 @@ def synthesize_speech(text, output_file):
 
     final_audio = AudioSegment.silent(0)
     for p_i, para in enumerate(paragraphs, 1):
-        print(f"Processing paragraph {p_i}/{len(paragraphs)}")
-
         sentences = re.split(r'(?<=[.!?])\s+', para)
         paragraph_audio = AudioSegment.silent(0)
 
@@ -191,8 +184,7 @@ def synthesize_speech(text, output_file):
             speed = speed_by_emotion(emotion)
             
             voice = TTS_DIALOGUE_SPEAKER if is_dialogue(sentence) else TTS_NARRATOR_SPEAKER
-            print(f"  Sentence: \"{sentence}\" | Emotion: {emotion} | Speed: {speed:.2f} | Voice: {voice}")
-            
+
             seg = tts_to_segment(sentence, voice, speed)
             paragraph_audio += seg
             paragraph_audio += AudioSegment.silent(TTS_BREATH_PAUSE_MS)
@@ -201,16 +193,13 @@ def synthesize_speech(text, output_file):
         final_audio += paragraph_audio
         final_audio += AudioSegment.silent(TTS_PARAGRAPH_PAUSE_MS)
 
-    print("Mixing ambience...")
     amb_loop = ambience * (len(final_audio) // len(ambience) + 1)
     amb_loop = amb_loop[:len(final_audio)]
     final_audio = final_audio.overlay(amb_loop)
 
-    print("Normalizing loudness...")
     final_audio = effects.normalize(final_audio)
 
     final_audio.export(AUDIO_WAV, format="wav")
-    print("\n✅ MASTER COMPLETE:", AUDIO_WAV)
 
 def convert_to_wav(input_file, output_file):
     audio = AudioSegment.from_mp3(input_file)
@@ -237,7 +226,7 @@ def get_sentences():
                 "start": start,
                 "end": end
             })
-        print(seg)
+
     return sentences
 
 def get_blocks(sentences):
@@ -445,23 +434,10 @@ def get_clips_from_videos(blocks):
         start = block["start"]
         end = block["end"]
         duration = end - start  
-        print(f"Processing block {i+1}/{len(blocks)}: duration {duration:.2f}s with start {start:.2f}s end {end:.2f}s")
 
         src_video = video_files[i]
         temp_retime = f"{TEMP_AI_VIDEOS_PATH}/retimed_{i:03d}.mp4"
-        #temp_smooth = f"{TEMP_AI_VIDEOS_PATH}/smooth_{i:03d}.mp4"
-        #temp_bloom = f"{TEMP_AI_VIDEOS_PATH}/bloom_{i:03d}.mp4"
-
-        #temp_video = os.path.join(TEMP_AI_VIDEOS_PATH, f"retimed_{i:03d}.mp4")
-        #retime_video_ffmpeg(src_video, temp_video, duration)
-
-        #retime_video_ffmpeg(src_video, temp_retime, duration)
         retime_and_upscale_video_ffmpeg(src_video, temp_retime, duration)
-        print("✅ Retime video.")
-        #smooth_optical_flow(temp_retime, temp_smooth)
-        #print("✅ Smooth optical flow.")
-        #flash_bloom_flicker(temp_smooth, temp_bloom)
-        #print("✅ Flash bloom flicker.")
 
         clip = VideoFileClip(temp_retime).set_start(start)
         clip = clip.fadein(FADE_DURATION).fadeout(FADE_DURATION)
