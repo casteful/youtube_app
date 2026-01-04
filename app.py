@@ -217,26 +217,49 @@ def convert_to_wav(input_file, output_file):
     audio.export(output_file, format="wav")
 
 def get_sentences():
-    model = WhisperModel("medium", device="cuda", compute_type="int8_float16")
+    model = WhisperModel(
+        "medium",
+        device="cuda",
+        compute_type="int8_float16"
+    )
+
     segments, info = model.transcribe(
         AUDIO_WAV,
         language=LANGUAGE,
-        vad_filter=True
+        vad_filter=True,
+        word_timestamps=True
     )
 
     sentences = []
+    buffer_words = []
+    sentence_start = None
 
     for seg in segments:
-        parts = re.split(r'(?<=[.!?])\s+', seg.text.strip())
-        step = (seg.end - seg.start) / max(len(parts), 1)
-        for i, s in enumerate(parts):
-            start = seg.start + step * i
-            end = seg.start + step * (i + 1)
-            sentences.append({
-                "text": s,
-                "start": start,
-                "end": end
-            })
+        for w in seg.words:
+            if sentence_start is None:
+                sentence_start = w.start
+
+            buffer_words.append(w)
+
+            if re.search(r'[.!?]$', w.word):
+                sentence_text = " ".join(x.word for x in buffer_words)
+                sentence_end = buffer_words[-1].end
+
+                sentences.append({
+                    "text": sentence_text.strip(),
+                    "start": sentence_start,
+                    "end": sentence_end
+                })
+
+                buffer_words = []
+                sentence_start = None
+
+    if buffer_words:
+        sentences.append({
+            "text": " ".join(w.word for w in buffer_words).strip(),
+            "start": sentence_start,
+            "end": buffer_words[-1].end
+        })
 
     return sentences
 
@@ -271,7 +294,8 @@ def read_blocks():
 
 def get_sorted_files(folder, ext):
     files = [f for f in os.listdir(folder) if f.lower().endswith(ext)]
-    files.sort(key=lambda x: os.path.getmtime(os.path.join(folder, x)))
+    #files.sort(key=lambda x: os.path.getmtime(os.path.join(folder, x)))
+    files.sort(key=lambda x: int(os.path.splitext(x)[0]))
     return [os.path.join(folder, f) for f in files]
 
 def smooth_zoom(clip, zoom_start=1.0, zoom_end=1.12, easing='ease_in_out'):
