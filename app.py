@@ -1,120 +1,49 @@
-import torch
-from TTS.api import TTS
-from TTS.utils.radam import RAdam
-from collections import defaultdict
-import soundfile as sf
 from pydub import AudioSegment
 from faster_whisper import WhisperModel
 import re
 from moviepy.editor import *
 from pydub import AudioSegment, effects
-import io
-import librosa
-import numpy as np
+from PIL import Image
 import subprocess
-
-torch.serialization.add_safe_globals([RAdam, defaultdict])
+import random
+import math
 
 STORY_FILE = "story.txt"
-
-TTS_MODEL = "tts_models/en/vctk/vits"
-TTS_NARRATOR_SPEAKER = "p262" #p226 p262
-TTS_DIALOGUE_SPEAKER = "p262"     
-TTS_PRESET = "high_quality"  
-TTS_FADE_MS = 400       
-TTS_PARAGRAPH_PAUSE_MS = 700       
-TTS_BREATH_PAUSE_MS = 250
-TTS_AMBIENCE_VOLUME = 20
-TTS_AMBIENCE_FILE = "ambience.wav"
-TTS_SPEED_CALM = 1   
-TTS_SPEED_TENSE = 1
-TTS_SPEED_SAD = 1
-TTS_TENSE_EMOTION_REGEX = r"(scream|blood|dark|shadow|knife|dead|cold|steps|run|ran|chase|fear|fight|escape|shout|yell|terror|panic|fright|alarmed|nervous|anxious|worried|uneasy|agitated|distressed)"
-TTS_SAD_EMOTION_REGEX = r"(tears|cry|empty|alone|silent|lost|lonely|grief|sorrow|heartbreak|regret|mourning|depressed|melancholy|gloomy|despair|hopeless|downcast)"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 AUDIO_MP3 = os.path.join(BASE_DIR, "story.mp3") 
 AUDIO_WAV = os.path.join(BASE_DIR, "story.wav") 
-IMAGES_PATH = os.path.join(BASE_DIR, "images")    
+IMAGES_PATH = os.path.join(BASE_DIR, "images")   
+IMAGES_PROCESSED_PATH = os.path.join(BASE_DIR, "images_processed")    
+
 AI_VIDEOS_PATH = "ai_videos"      
 TEMP_AI_VIDEOS_PATH = "temp_clips"
 
-N_SENTENCES = 2                     
+N_SENTENCES = 8                    
 LANGUAGE = "en"
 TIMED_SENTENCES_FILE = "timed_sentences.txt"
 
-IMG_EXT = ".png"
+IMG_EXT = ".jpeg"
 VIDEO_EXT = ".mp4"
 
+IMAGE_RESOLUTION_WIDTH = 1280
+IMAGE_RESOLUTION_HEIGHT = 720
+IMAGE_ZOOM = 1
+IMAGE_OFFSET = -20
+
 FADE_DURATION = 1                        
-ZOOM = 1.2
+ZOOM = 1
+OVERSCALE = 1.1
 VIDEO_FPS = 60
-RENDERING_PRESET = "slow" #ultrafast
+RENDERING_PRESET = "slow" #ultrafast / slow
 VIDEO_RESOLUTION_HEIGHT = "1280"
 VIDEO_RESOLUTION_WIDTH = "720"
-VIDEO_ZOOM_FACTOR = 2
-VIDEO_BLUR_FACTOR = 1.1
+VIDEO_RESOLUTION = (1280, 720) #"400*240"
+VIDEO_ZOOM_FACTOR = 1
+VIDEO_BLUR_FACTOR = 1
 VIDEO_CODEC = "lanczos"
-VIDEO_BITRATE = "20M"
+VIDEO_BITRATE = "30M"
 OUTPUT_VIDEO = "final_video.mp4"
-
-USE_GPU = torch.cuda.is_available()
-tts = TTS(model_name=TTS_MODEL, gpu=USE_GPU, progress_bar=False)
-
-def detect_emotion(text):
-    text = text.lower()
-    if re.search(TTS_TENSE_EMOTION_REGEX, text):
-        return "tense"
-    if re.search(TTS_SAD_EMOTION_REGEX, text):
-        return "sad"
-    return "calm"
-
-def speed_by_emotion(emotion):
-    return {
-        "tense": TTS_SPEED_TENSE,
-        "sad": TTS_SPEED_SAD,
-        "calm": TTS_SPEED_CALM
-    }[emotion]
-
-def is_dialogue(text):
-    return text.strip().startswith(("\"", "“", "'"))
-
-def tts_to_segment(text, speaker, speed):
-    wav = tts.tts(
-        text=text,
-        speaker=speaker
-    )
-
-    wav = np.array(wav, dtype=np.float32)
-    wav_stretched = librosa.effects.time_stretch(wav, rate=speed)
-
-    buf = io.BytesIO()
-    sf.write(buf, wav_stretched, 24000, format="WAV")
-    buf.seek(0)
-    return AudioSegment.from_file(buf, format="wav")
-
-def retime_video_ffmpeg(src, dst, target_duration):
-    result = subprocess.run([
-        "ffprobe", "-v", "error",
-        "-show_entries", "format=duration",
-        "-of", "default=noprint_wrappers=1:nokey=1",
-        src
-    ], capture_output=True, text=True)
-
-    original_duration = float(result.stdout.strip())
-
-    pts_factor = target_duration / original_duration
-
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", src,
-        "-filter:v", f"setpts={pts_factor}*PTS",
-        "-an",  # no audio here
-        "-pix_fmt", "yuv420p",
-        dst
-    ]
-
-    subprocess.run(cmd, check=True)
 
 def retime_and_upscale_video_ffmpeg(
     input_video,
@@ -174,43 +103,6 @@ def retime_and_upscale_video_ffmpeg(
     ]
 
     subprocess.run(cmd, check=True)
-
-def synthesize_speech(text, output_file):
-    with open(STORY_FILE, "r", encoding="utf-8") as f:
-        paragraphs = [p.strip() for p in f.read().split("\n\n") if p.strip()]
-
-    ambience = AudioSegment.from_file(TTS_AMBIENCE_FILE).low_pass_filter(400)
-    ambience = ambience - TTS_AMBIENCE_VOLUME  
-
-    final_audio = AudioSegment.silent(0)
-    for p_i, para in enumerate(paragraphs, 1):
-        sentences = re.split(r'(?<=[.!?])\s+', para)
-        paragraph_audio = AudioSegment.silent(0)
-
-        for sentence in sentences:
-            if not sentence.strip():
-                continue
-            
-            emotion = detect_emotion(sentence)
-            speed = speed_by_emotion(emotion)
-            
-            voice = TTS_DIALOGUE_SPEAKER if is_dialogue(sentence) else TTS_NARRATOR_SPEAKER
-
-            seg = tts_to_segment(sentence, voice, speed)
-            paragraph_audio += seg
-            paragraph_audio += AudioSegment.silent(TTS_BREATH_PAUSE_MS)
-        
-        paragraph_audio = paragraph_audio.fade_in(TTS_FADE_MS).fade_out(TTS_FADE_MS)
-        final_audio += paragraph_audio
-        final_audio += AudioSegment.silent(TTS_PARAGRAPH_PAUSE_MS)
-
-    amb_loop = ambience * (len(final_audio) // len(ambience) + 1)
-    amb_loop = amb_loop[:len(final_audio)]
-    final_audio = final_audio.overlay(amb_loop)
-
-    final_audio = effects.normalize(final_audio)
-
-    final_audio.export(AUDIO_WAV, format="wav")
 
 def convert_to_wav(input_file, output_file):
     audio = AudioSegment.from_mp3(input_file)
@@ -298,60 +190,137 @@ def get_sorted_files(folder, ext):
     files.sort(key=lambda x: int(os.path.splitext(x)[0]))
     return [os.path.join(folder, f) for f in files]
 
+def preprocess_images(
+    input_dir,
+    output_dir,
+    target_size=(1280, 720),
+    zoom=1.08,
+    y_offset=-70,
+    ext=(".png", ".jpg", ".jpeg")
+):
+    os.makedirs(output_dir, exist_ok=True)
+
+    for fname in sorted(os.listdir(input_dir)):
+        if not fname.lower().endswith(ext):
+            continue
+
+        in_path = os.path.join(input_dir, fname)
+        out_path = os.path.join(output_dir, fname)
+
+        img = Image.open(in_path).convert("RGB")
+        w, h = img.size
+        tw, th = target_size
+
+        zw = int(w * zoom)
+        zh = int(h * zoom)
+
+        img = img.resize((zw, zh), Image.LANCZOS)
+
+        x1 = (zw - tw) // 2
+        y1 = (zh - th) // 2 + y_offset
+
+        x1 = max(0, min(x1, zw - tw))
+        y1 = max(0, min(y1, zh - th))
+
+        img = img.crop((x1, y1, x1 + tw, y1 + th))
+
+        img.save(out_path, quality=95, subsampling=0)
+
+        print(f"Processed: {fname}")
+
+    print("✅ All images processed")
+
+def ease_in_out(t, d):
+    return (1 - math.cos(math.pi * t / d)) / 2
+
+def ease_in_out(p):
+    return 0.5 - 0.5 * math.cos(math.pi * p)
+
+def linear(p):
+    return max(0.0, min(1.0, p))
+
 def smooth_zoom(clip, zoom_start=1.0, zoom_end=1.12, easing='ease_in_out'):
     duration = clip.duration
-
     def easing_func(t):
-        p = t / duration
-        if p < 0.5:
-            return zoom_start + (zoom_end - zoom_start) * 2 * p * p
-        else:
-            return zoom_start + (zoom_end - zoom_start) * (1 - 2*(1-p)*(1-p))
-    
+            #p = t / duration
+            #p = ease_in_out(t, duration)
+            p = linear(t / duration)
+            if p < 0.5:
+                return zoom_start + (zoom_end - zoom_start) * 2 * p * p
+            else:
+                return zoom_start + (zoom_end - zoom_start) * (1 - 2*(1-p)*(1-p))
+        
     return clip.resize(lambda t: easing_func(t))
 
-def smooth_optical_flow(src, dst, target_fps=60):
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", src,
-        "-filter_complex", f"minterpolate='mi_mode=mci:mc_mode=aobmc:vsbmc=1:fps={target_fps}'",
-        "-pix_fmt", "yuv420p",
-        dst
-    ]
+def zoom_pan_linear(
+    img_path,
+    duration,
+    start_time=0,
+    resolution=(1280, 720),
+    zoom=1.1,
+    direction="right",  # "right", "left", "up", "down"
+    fps=60
+):
+    W, H = resolution
 
-    subprocess.run(cmd, check=True)
+    overscale = zoom * OVERSCALE
 
-def flash_bloom_flicker(src, dst):
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", src,
-        "-filter_complex",
-        "split[v1][v2];[v1]gblur=sigma=3[vblur];[v2][vblur]overlay=format=auto:shortest=1,eq=brightness=0.02:saturation=1.1",
-        "-pix_fmt", "yuv420p",
-        dst
-    ]
+    base = (
+        ImageClip(img_path)
+        .resize(overscale)
+        .set_duration(duration)
+        .set_fps(fps)
+    )
 
-    subprocess.run(cmd, check=True)
+    BW, BH = base.size
 
-def run_ffmpeg_filter(input_file, output_file, vf_filter):
-    cmd = [
-        "ffmpeg", "-y", "-i", input_file,
-        "-vf", vf_filter,
-        "-c:a", "copy",  
-        "-pix_fmt", "yuv420p",
-        output_file
-    ]
+    cx = (BW - W) / 2
+    cy = (BH - H) / 2
 
-    subprocess.run(cmd, check=True)
+    if direction == "right":
+        sx, ex = cx - (BW - W) / 2, cx + (BW - W) / 2
+        sy = ey = cy
+    elif direction == "left":
+        sx, ex = cx + (BW - W) / 2, cx - (BW - W) / 2
+        sy = ey = cy
+    elif direction == "down":
+        sy, ey = cy - (BH - H) / 2, cy + (BH - H) / 2
+        sx = ex = cx
+    elif direction == "up":
+        sy, ey = cy + (BH - H) / 2, cy - (BH - H) / 2
+        sx = ex = cx
+    else:
+        sx = ex = cx
+        sy = ey = cy
+
+    def transform(get_frame, t):
+        frame = get_frame(t)
+        p = min(1, max(0, t / duration))  
+
+        x = sx + (ex - sx) * p
+        y = sy + (ey - sy) * p
+
+        return frame[
+            int(y):int(y + H),
+            int(x):int(x + W)
+        ]
+
+    return (
+        base.fl(transform, apply_to=["mask"])
+        .set_start(start_time)
+        .fadein(0.25)
+        .fadeout(0.25)
+    )
+
 
 def get_clips(blocks):
     clips = []
 
-    image_files = get_sorted_files(IMAGES_PATH, IMG_EXT)
+    image_files = get_sorted_files(IMAGES_PROCESSED_PATH, IMG_EXT)
     if len(image_files) < len(blocks):
         raise ValueError("Not enough images for the number of blocks.")
 
-    #os.makedirs("temp_clips", exist_ok=True)
+    W, H = VIDEO_RESOLUTION
 
     for idx, block in enumerate(blocks):
         img_path = image_files[idx]  
@@ -359,25 +328,22 @@ def get_clips(blocks):
         duration = block["end"] - block["start"]
         start = block["start"]
 
-        #temp_video = f"temp_clips/clip_{idx}.mp4"
+        #clip = ImageClip(img_path).resize((int(W * ZOOM), int(H * ZOOM))).set_duration(duration).set_fps(VIDEO_FPS)
+        clip = ImageClip(img_path).resize((int(W), int(H))).set_duration(duration).set_fps(VIDEO_FPS)
 
-        #subprocess.run(
-        #    f'ffmpeg -y -loop 1 -i "{img_path}" -t {duration} -vf "fps={VIDEO_FPS},scale={VIDEO_RESOLUTION}" -pix_fmt yuv420p "{temp_video}"',
-        #    shell=True,
-        #    check=True
-        #)
-
-        #clip = VideoFileClip(temp_video)
         #clip = smooth_zoom(clip, zoom_start=1.0, zoom_end=ZOOM)
-        clip = ImageClip(img_path).set_duration(duration)
+        #clip = clip.set_position(("center","center"))
+
+        #clip = zoom_pan_linear(img_path=img_path, duration=duration, start_time=start, resolution=(W, H), zoom=ZOOM, direction="right", fps=60)
+
         clip = clip.fadein(FADE_DURATION).fadeout(FADE_DURATION)
-        clip = clip.set_fps(VIDEO_FPS)
-        clip = clip.resize(lambda t: 1 + (ZOOM-1)*(t/duration))
-        clip = clip.set_position(("center","center"))
         clip = clip.set_start(start)
+
         clips.append(clip)
 
+    #video = CompositeVideoClip(clips, size=(W, H))
     video = CompositeVideoClip(clips)
+
     audio = AudioFileClip(AUDIO_WAV)
     video = video.set_audio(audio)
 
@@ -425,10 +391,10 @@ def get_clips_from_videos(blocks):
     video.write_videofile(
         OUTPUT_VIDEO,
         fps=VIDEO_FPS,
-        codec="h264_nvenc",   # ✅ GPU encoder. CPU - "libx264"
+        codec="h264_nvenc",
         audio_codec="aac",
         bitrate=VIDEO_BITRATE,
-        threads=0,            # let NVENC manage
+        threads=0,
         ffmpeg_params=[
             "-pix_fmt", "yuv420p",
             "-rc", "vbr",
@@ -441,26 +407,26 @@ def get_clips_from_videos(blocks):
     video.close()
     
 def main():
-    #synthesize_speech(STORY_FILE, AUDIO_WAV)
-    print("✅ Synthesized speech from text.")
+    #convert_to_wav(AUDIO_MP3, AUDIO_WAV)
+    #print("✅ Converted MP3 to WAV.")
 
-    convert_to_wav(AUDIO_MP3, AUDIO_WAV)
-    print("✅ Converted MP3 to WAV.")
+    #sentences = get_sentences()
+    #print("✅ Extracted sentences from audio.")
 
-    sentences = get_sentences()
-    print("✅ Extracted sentences from audio.")
+    #get_blocks(sentences)
+    #print("✅ Created timed sentences file.")
 
-    get_blocks(sentences)
-    print("✅ Created timed sentences file.")
+    #preprocess_images(input_dir=IMAGES_PATH, output_dir=IMAGES_PROCESSED_PATH,target_size=(IMAGE_RESOLUTION_WIDTH, IMAGE_RESOLUTION_HEIGHT), zoom=IMAGE_ZOOM, y_offset=IMAGE_OFFSET)
+    #print("✅ Preprocessed images for video.")
 
     blocks = read_blocks()
-    print("✅ Read timed sentences.")
+    #print("✅ Read timed sentences.")
 
-    #get_clips(blocks)
+    get_clips(blocks)
     #print("✅ Created video clip from images.")
 
-    get_clips_from_videos(blocks)
-    print("✅ Created video clip from ai videos.")
+    #get_clips_from_videos(blocks)
+    #print("✅ Created video clip from ai videos.")
 
 if __name__ == "__main__":
     main()
